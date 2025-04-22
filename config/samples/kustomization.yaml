@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- aws_v1alpha1_awsmskdemokafkaacl.yaml
+- aws_v1alpha1_awsmskdemokafkatopic.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

@@ -1,0 +1,9 @@
+apiVersion: aws.nttdata.com/v1alpha1
+kind: AwsMSKDemoKafkaTopic
+metadata:
+  labels:
+    app.kubernetes.io/name: k8s-operator-aws-msk-demo
+    app.kubernetes.io/managed-by: kustomize
+  name: awsmskdemokafkatopic-sample
+spec:
+  # TODO(user): Add fields here

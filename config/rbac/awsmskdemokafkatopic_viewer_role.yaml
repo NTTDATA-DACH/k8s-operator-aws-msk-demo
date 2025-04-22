@@ -1,0 +1,23 @@
+# permissions for end users to view awsmskdemokafkatopics.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: k8s-operator-aws-msk-demo
+    app.kubernetes.io/managed-by: kustomize
+  name: awsmskdemokafkatopic-viewer-role
+rules:
+- apiGroups:
+  - aws.nttdata.com
+  resources:
+  - awsmskdemokafkatopics
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - aws.nttdata.com
+  resources:
+  - awsmskdemokafkatopics/status
+  verbs:
+  - get
