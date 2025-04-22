@@ -1,2 +1,8 @@
 resources:
 - manager.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+images:
+- name: controller
+  newName: 063010046250.dkr.ecr.eu-central-1.amazonaws.com/k8s-operator-aws-msk-demo
+  newTag: v0.0.1
