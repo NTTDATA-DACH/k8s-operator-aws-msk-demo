@@ -1,0 +1,18 @@
+# config/manager/manager_patch.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+spec:
+  template:
+    spec:
+      volumes:
+        - name: kafka-client-cert
+          secret:
+            secretName: kafka-client-cert
+      containers:
+        - name: manager
+          volumeMounts:
+            - mountPath: /certs
+              name: kafka-client-cert
+              readOnly: true

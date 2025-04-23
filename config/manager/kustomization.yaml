@@ -5,4 +5,19 @@ kind: Kustomization
 images:
 - name: controller
   newName: 063010046250.dkr.ecr.eu-central-1.amazonaws.com/k8s-operator-aws-msk-demo
-  newTag: v0.0.6
+  newTag: v0.0.12
+secretGenerator:
+- files:
+  - client.crt=client.crt
+  - client.key=client.key
+  - ca.crt=ca.crt
+  name: kafka-client-cert
+  type: Opaque
+generatorOptions:
+  disableNameSuffixHash: true
+patches:
+- path: manager_patch.yaml
+  target:
+    kind: Deployment
+    name: controller-manager
+    namespace: system

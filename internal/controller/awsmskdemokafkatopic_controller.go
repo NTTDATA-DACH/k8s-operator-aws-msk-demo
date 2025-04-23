@@ -18,8 +18,13 @@ package controller
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/segmentio/kafka-go"
+	"os"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -84,16 +89,65 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		log.Error(err, "failed to get cluster brokers: "+err.Error())
 		return ctrl.Result{}, err
 	}
-	_ = brokers
+
+	err = r.createMSKKafkaTopic(ctx, brokers, topic)
+	if err != nil {
+		log.Error(err, "failed to create topic: "+topic.Spec.Name)
+		return ctrl.Result{}, err
+	}
 
 	log.Info("reconcile finished...")
 	return ctrl.Result{}, nil
 }
 
-//func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
-// }
+func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context, brokers []string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
+	log := log.FromContext(ctx)
+	log.Info("trying to create topic: " + topic.Spec.Name)
 
-func (r *AwsMSKDemoKafkaTopicReconciler) getMSKClusterBrokers(ctx context.Context, clusterArn string) (*string, error) {
+	// Load TLS certificates
+	cert, err := r.loadCertificate(ctx)
+	if err != nil {
+		return err
+	}
+	ca, err := r.loadRootCA(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Create dialer
+	tlsCfg := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		RootCAs:            ca,
+		InsecureSkipVerify: true,
+	}
+	dialer := &kafka.Dialer{
+		TLS: tlsCfg,
+	}
+
+	// Create connection
+	broker := brokers[0]
+	log.Info("trying to dial broker: " + broker)
+	conn, err := dialer.Dial("tcp", broker)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// Create topic
+	err = conn.CreateTopics(kafka.TopicConfig{
+		Topic:             topic.Spec.Name,
+		NumPartitions:     int(topic.Spec.Partitions),
+		ReplicationFactor: int(topic.Spec.ReplicationFactor),
+	})
+	if err != nil {
+		return err
+	}
+
+	log.Info("created topic: " + topic.Spec.Name)
+	return nil
+}
+
+func (r *AwsMSKDemoKafkaTopicReconciler) getMSKClusterBrokers(ctx context.Context, clusterArn string) ([]string, error) {
 	log := log.FromContext(ctx)
 	log.Info("trying to retrieve cluster brokers for cluster: " + clusterArn)
 
@@ -127,7 +181,38 @@ func (r *AwsMSKDemoKafkaTopicReconciler) getMSKClusterBrokers(ctx context.Contex
 	}
 
 	log.Info("retrieved following cluster brokers: " + *brokers)
-	return brokers, nil
+	return strings.Split(*brokers, ","), nil
+}
+
+func (r *AwsMSKDemoKafkaTopicReconciler) loadCertificate(ctx context.Context) (tls.Certificate, error) {
+	log := log.FromContext(ctx)
+	log.Info("trying to load certificate")
+
+	cert, err := tls.LoadX509KeyPair("/certs/client.crt", "/certs/client.key")
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	log.Info("certificate loaded")
+	return cert, nil
+}
+
+func (r *AwsMSKDemoKafkaTopicReconciler) loadRootCA(ctx context.Context) (*x509.CertPool, error) {
+	log := log.FromContext(ctx)
+	log.Info("trying to load root ca")
+
+	caCert, err := os.ReadFile("/certs/ca.crt")
+	if err != nil {
+		return nil, err
+	}
+
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(caCert) {
+		return nil, err
+	}
+
+	log.Info("root ca loaded")
+	return caCertPool, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
