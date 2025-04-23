@@ -136,12 +136,12 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 			log.Info("finalizer deleted")
 			topic.Status.Status = awsv1alpha1.StateDeleted
 		}
-	}
-
-	err = r.createMSKKafkaTopic(ctx, brokers, topic)
-	if err != nil {
-		log.Error(err, "failed to create topic: "+topic.Spec.Name)
-		return ctrl.Result{}, err
+	} else {
+		err = r.createMSKKafkaTopic(ctx, brokers, topic)
+		if err != nil {
+			log.Error(err, "failed to create topic: "+topic.Spec.Name)
+			return ctrl.Result{}, err
+		}
 	}
 
 	log.Info("reconcile finished...")
