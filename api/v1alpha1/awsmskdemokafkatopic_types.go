@@ -20,6 +20,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Define constants for RDS instance state values
+const (
+	StateCreating = "creating"
+	StateUpdating = "updating"
+	StateDeleting = "deleting"
+	StateCreated  = "created"
+	StateUpdated  = "updated"
+	StateDeleted  = "deleted"
+)
+
 // AwsMSKDemoKafkaTopicSpec defines the desired state of AwsMSKDemoKafkaTopic
 type AwsMSKDemoKafkaTopicSpec struct {
 	ClusterArn        string `json:"clusterArn"`

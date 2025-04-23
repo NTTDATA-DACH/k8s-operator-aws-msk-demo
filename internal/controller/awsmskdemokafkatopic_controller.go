@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/segmentio/kafka-go"
 	"os"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,6 +41,8 @@ import (
 
 	awsv1alpha1 "github.com/NTTDATA-DACH/k8s-operator-aws-msk-demo/api/v1alpha1"
 )
+
+const awsmskdemoinstanceFinalizer = "aws.nttdata.com/finalizer"
 
 // AwsMSKDemoKafkaTopicReconciler reconciles a AwsMSKDemoKafkaTopic object
 type AwsMSKDemoKafkaTopicReconciler struct {
@@ -90,6 +93,51 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
+	// Add finalizer
+	if !controllerutil.ContainsFinalizer(topic, awsmskdemoinstanceFinalizer) {
+		log.Info("adding finalizer for AwsMSKDemoKafkaTopic")
+		topic.Status.Status = awsv1alpha1.StateUpdating
+
+		if ok := controllerutil.AddFinalizer(topic, awsmskdemoinstanceFinalizer); !ok {
+			err = fmt.Errorf("failed to add finalizer into AwsMSKDemoKafkaTopic")
+			log.Error(err, "failed to add finalizer into AwsMSKDemoKafkaTopic")
+			return ctrl.Result{}, err
+		}
+		if err := r.Update(ctx, topic); err != nil {
+			log.Error(err, "failed to update AwsMSKDemoKafkaTopic to add finalizer: "+err.Error())
+			return ctrl.Result{}, err
+		}
+
+		log.Info("added finalizer for AwsMSKDemoKafkaTopic")
+		topic.Status.Status = awsv1alpha1.StateUpdated
+	}
+
+	// Remove instance with finalizer
+	if !topic.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(topic, awsmskdemoinstanceFinalizer) {
+			log.Info("starting to delete topic: " + topic.Spec.Name)
+			topic.Status.Status = awsv1alpha1.StateDeleting
+
+			if err := r.deleteMSKKafkaTopic(ctx, brokers, topic); err != nil {
+				log.Error(err, "failed to remove topic: "+err.Error())
+				return ctrl.Result{}, err
+			}
+			log.Info("topic deleted, removing finalizer")
+			if ok := controllerutil.RemoveFinalizer(topic, awsmskdemoinstanceFinalizer); !ok {
+				err = fmt.Errorf("failed to remove finalizer from AwsMSKDemoKafkaTopic")
+				log.Error(err, "failed to remove finalizer from AwsMSKDemoKafkaTopic")
+				return ctrl.Result{}, err
+			}
+			if err := r.Update(ctx, topic); err != nil {
+				log.Error(err, "failed to update AwsMSKDemoKafkaTopic to remove finalizer: "+err.Error())
+				return ctrl.Result{}, err
+			}
+
+			log.Info("finalizer deleted")
+			topic.Status.Status = awsv1alpha1.StateDeleted
+		}
+	}
+
 	err = r.createMSKKafkaTopic(ctx, brokers, topic)
 	if err != nil {
 		log.Error(err, "failed to create topic: "+topic.Spec.Name)
@@ -104,24 +152,10 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context
 	log := log.FromContext(ctx)
 	log.Info("trying to create topic: " + topic.Spec.Name)
 
-	// Load TLS certificates
-	cert, err := r.loadCertificate(ctx)
-	if err != nil {
-		return err
-	}
-	ca, err := r.loadRootCA(ctx)
-	if err != nil {
-		return err
-	}
-
 	// Create dialer
-	tlsCfg := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            ca,
-		InsecureSkipVerify: true,
-	}
-	dialer := &kafka.Dialer{
-		TLS: tlsCfg,
+	dialer, err := r.createDialerConfig(ctx)
+	if err != nil {
+		return err
 	}
 
 	// Create connection
@@ -143,7 +177,36 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context
 		return err
 	}
 
-	log.Info("created topic: " + topic.Spec.Name)
+	log.Info("topic created: " + topic.Spec.Name)
+	return nil
+}
+
+func (r *AwsMSKDemoKafkaTopicReconciler) deleteMSKKafkaTopic(ctx context.Context, brokers []string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
+	log := log.FromContext(ctx)
+	log.Info("trying to delete topic: " + topic.Spec.Name)
+
+	// Create dialer
+	dialer, err := r.createDialerConfig(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Create connection
+	broker := brokers[0]
+	log.Info("trying to dial broker: " + broker)
+	conn, err := dialer.Dial("tcp", broker)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// Delete topic
+	err = conn.DeleteTopics(topic.Spec.Name)
+	if err != nil {
+		return err
+	}
+
+	log.Info("topic deleted: " + topic.Spec.Name)
 	return nil
 }
 
@@ -182,6 +245,30 @@ func (r *AwsMSKDemoKafkaTopicReconciler) getMSKClusterBrokers(ctx context.Contex
 
 	log.Info("retrieved following cluster brokers: " + *brokers)
 	return strings.Split(*brokers, ","), nil
+}
+
+func (r *AwsMSKDemoKafkaTopicReconciler) createDialerConfig(ctx context.Context) (*kafka.Dialer, error) {
+	// Load TLS certificates
+	cert, err := r.loadCertificate(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ca, err := r.loadRootCA(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create dialer
+	tlsCfg := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		RootCAs:            ca,
+		InsecureSkipVerify: true,
+	}
+	dialer := &kafka.Dialer{
+		TLS: tlsCfg,
+	}
+
+	return dialer, nil
 }
 
 func (r *AwsMSKDemoKafkaTopicReconciler) loadCertificate(ctx context.Context) (tls.Certificate, error) {
