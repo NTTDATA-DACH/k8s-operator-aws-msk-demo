@@ -92,6 +92,12 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		log.Error(err, "failed to get cluster brokers: "+err.Error())
 		return ctrl.Result{}, err
 	}
+	broker, found := findFirstByPrefix(brokers, "b-1.")
+	if !found {
+		err := fmt.Errorf("no brokers with prefix b-1 found")
+		log.Error(err, "no brokers with prefix b-1 found")
+		return ctrl.Result{}, err
+	}
 
 	// Add finalizer
 	if !controllerutil.ContainsFinalizer(topic, awsmskdemoinstanceFinalizer) {
@@ -112,32 +118,23 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		topic.Status.Status = awsv1alpha1.StateUpdated
 	}
 
-	// Remove instance with finalizer
 	if !topic.DeletionTimestamp.IsZero() {
+		// Remove topic with finalizer
 		if controllerutil.ContainsFinalizer(topic, awsmskdemoinstanceFinalizer) {
-			log.Info("starting to delete topic: " + topic.Spec.Name)
 			topic.Status.Status = awsv1alpha1.StateDeleting
-
-			if err := r.deleteMSKKafkaTopic(ctx, brokers, topic); err != nil {
-				log.Error(err, "failed to remove topic: "+err.Error())
+			if err := r.deleteMSKKafkaTopic(ctx, broker, topic); err != nil {
+				log.Error(err, "failed to delete topic: "+err.Error())
 				return ctrl.Result{}, err
 			}
-			log.Info("topic deleted, removing finalizer")
-			if ok := controllerutil.RemoveFinalizer(topic, awsmskdemoinstanceFinalizer); !ok {
-				err = fmt.Errorf("failed to remove finalizer from AwsMSKDemoKafkaTopic")
-				log.Error(err, "failed to remove finalizer from AwsMSKDemoKafkaTopic")
+			if err := r.removeFinalizer(ctx, topic); err != nil {
+				log.Error(err, "failed to remove finalizer: "+err.Error())
 				return ctrl.Result{}, err
 			}
-			if err := r.Update(ctx, topic); err != nil {
-				log.Error(err, "failed to update AwsMSKDemoKafkaTopic to remove finalizer: "+err.Error())
-				return ctrl.Result{}, err
-			}
-
-			log.Info("finalizer deleted")
 			topic.Status.Status = awsv1alpha1.StateDeleted
 		}
 	} else {
-		err = r.createMSKKafkaTopic(ctx, brokers, topic)
+		// Create topic
+		err = r.createMSKKafkaTopic(ctx, broker, topic)
 		if err != nil {
 			log.Error(err, "failed to create topic: "+topic.Spec.Name)
 			return ctrl.Result{}, err
@@ -148,7 +145,7 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 	return ctrl.Result{}, nil
 }
 
-func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context, brokers []string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
+func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context, broker string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
 	log := log.FromContext(ctx)
 	log.Info("trying to create topic: " + topic.Spec.Name)
 
@@ -159,7 +156,6 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context
 	}
 
 	// Create connection
-	broker := brokers[0]
 	log.Info("trying to dial broker: " + broker)
 	conn, err := dialer.Dial("tcp", broker)
 	if err != nil {
@@ -181,7 +177,7 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context
 	return nil
 }
 
-func (r *AwsMSKDemoKafkaTopicReconciler) deleteMSKKafkaTopic(ctx context.Context, brokers []string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
+func (r *AwsMSKDemoKafkaTopicReconciler) deleteMSKKafkaTopic(ctx context.Context, broker string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
 	log := log.FromContext(ctx)
 	log.Info("trying to delete topic: " + topic.Spec.Name)
 
@@ -192,7 +188,6 @@ func (r *AwsMSKDemoKafkaTopicReconciler) deleteMSKKafkaTopic(ctx context.Context
 	}
 
 	// Create connection
-	broker := brokers[0]
 	log.Info("trying to dial broker: " + broker)
 	conn, err := dialer.Dial("tcp", broker)
 	if err != nil {
@@ -207,6 +202,24 @@ func (r *AwsMSKDemoKafkaTopicReconciler) deleteMSKKafkaTopic(ctx context.Context
 	}
 
 	log.Info("topic deleted: " + topic.Spec.Name)
+	return nil
+}
+
+func (r *AwsMSKDemoKafkaTopicReconciler) removeFinalizer(ctx context.Context, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
+	log := log.FromContext(ctx)
+	log.Info("trying to remove finalizer")
+
+	if ok := controllerutil.RemoveFinalizer(topic, awsmskdemoinstanceFinalizer); !ok {
+		err := fmt.Errorf("failed to remove finalizer from AwsMSKDemoKafkaTopic")
+		log.Error(err, "failed to remove finalizer from AwsMSKDemoKafkaTopic")
+		return err
+	}
+	if err := r.Update(ctx, topic); err != nil {
+		log.Error(err, "failed to update AwsMSKDemoKafkaTopic to remove finalizer: "+err.Error())
+		return err
+	}
+
+	log.Info("finalizer deleted")
 	return nil
 }
 
@@ -307,4 +320,13 @@ func (r *AwsMSKDemoKafkaTopicReconciler) SetupWithManager(mgr ctrl.Manager) erro
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&awsv1alpha1.AwsMSKDemoKafkaTopic{}).
 		Complete(r)
+}
+
+func findFirstByPrefix(input []string, prefix string) (string, bool) {
+	for _, str := range input {
+		if strings.HasPrefix(str, prefix) {
+			return str, true // Return the first match and true for success
+		}
+	}
+	return "", false // Return empty string and false if no match is found
 }

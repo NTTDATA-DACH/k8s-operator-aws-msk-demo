@@ -5,7 +5,7 @@ kind: Kustomization
 images:
 - name: controller
   newName: 063010046250.dkr.ecr.eu-central-1.amazonaws.com/k8s-operator-aws-msk-demo
-  newTag: v0.0.13
+  newTag: v0.0.16
 secretGenerator:
 - files:
   - client.crt=client.crt
