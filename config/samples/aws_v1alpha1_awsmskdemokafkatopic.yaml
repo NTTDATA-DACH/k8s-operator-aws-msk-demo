@@ -4,6 +4,9 @@ metadata:
   labels:
     app.kubernetes.io/name: k8s-operator-aws-msk-demo
     app.kubernetes.io/managed-by: kustomize
-  name: awsmskdemokafkatopic-sample
+  name: awsmskdemokafkatopic-demo
 spec:
-  # TODO(user): Add fields here
+  clusterArn: arn:aws:kafka:eu-central-1:063010046250:cluster/aboczek-msk-cluster-manu1/8b0b2493-fc95-4660-a91d-d4cc12eb162e-8
+  name: "demo-topic"
+  partitions: 1
+  replicationFactor: 1

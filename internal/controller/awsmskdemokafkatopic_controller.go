@@ -18,11 +18,20 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	awsCfg "github.com/aws/aws-sdk-go-v2/config"
+	awsKafka "github.com/aws/aws-sdk-go-v2/service/kafka"
+	// awsKafkaTypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+
+	// corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	awsv1alpha1 "github.com/NTTDATA-DACH/k8s-operator-aws-msk-demo/api/v1alpha1"
 )
@@ -30,7 +39,8 @@ import (
 // AwsMSKDemoKafkaTopicReconciler reconciles a AwsMSKDemoKafkaTopic object
 type AwsMSKDemoKafkaTopicReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme      *runtime.Scheme
+	kafkaClient *awsKafka.Client
 }
 
 // +kubebuilder:rbac:groups=aws.nttdata.com,resources=awsmskdemokafkatopics,verbs=get;list;watch;create;update;patch;delete
@@ -39,7 +49,6 @@ type AwsMSKDemoKafkaTopicReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
 // the AwsMSKDemoKafkaTopic object against the actual cluster state, and then
 // perform operations to make the cluster state reflect the state specified by
 // the user.
@@ -47,11 +56,78 @@ type AwsMSKDemoKafkaTopicReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	log.Info(fmt.Sprintf("reconcile triggered for '%s' in namespace '%s'...", req.Name, req.Namespace))
 
+	// Fetch the AwsMSKDemoKafkaTopic topic
+	topic := &awsv1alpha1.AwsMSKDemoKafkaTopic{}
+	if err := r.Get(ctx, req.NamespacedName, topic); err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Info("not found AwsMSKDemoKafkaTopic, exiting reconciliation loop...")
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+	log.Info("found: " + topic.Name)
+
+	// Create Kafka client
+	cfg, err := awsCfg.LoadDefaultConfig(ctx)
+	if err != nil {
+		log.Error(err, "failed to load AWS config: "+err.Error())
+		return ctrl.Result{}, err
+	}
+	r.kafkaClient = awsKafka.NewFromConfig(cfg)
+
+	brokers, err := r.getMSKClusterBrokers(ctx, topic.Spec.ClusterArn)
+	if err != nil {
+		log.Error(err, "failed to get cluster brokers: "+err.Error())
+		return ctrl.Result{}, err
+	}
+	_ = brokers
+
+	log.Info("reconcile finished...")
 	return ctrl.Result{}, nil
+}
+
+//func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
+// }
+
+func (r *AwsMSKDemoKafkaTopicReconciler) getMSKClusterBrokers(ctx context.Context, clusterArn string) (*string, error) {
+	log := log.FromContext(ctx)
+	log.Info("trying to retrieve cluster brokers for cluster: " + clusterArn)
+
+	result, err := r.kafkaClient.DescribeClusterV2(ctx, &awsKafka.DescribeClusterV2Input{
+		ClusterArn: aws.String(clusterArn),
+	})
+	if err != nil {
+		return nil, err
+	}
+	clusterName := *result.ClusterInfo.ClusterName
+	log.Info("found cluster based on arn with the name: " + clusterName)
+
+	output, err := r.kafkaClient.GetBootstrapBrokers(ctx, &awsKafka.GetBootstrapBrokersInput{
+		ClusterArn: aws.String(clusterArn),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var brokers *string
+	if b := output.BootstrapBrokerString; b != nil && len(*b) > 0 {
+		log.Info("BootstrapBrokerString found")
+		brokers = b
+	} else if b := output.BootstrapBrokerStringTls; b != nil && len(*b) > 0 {
+		log.Info("BootstrapBrokerStringTls found")
+		brokers = b
+	} else if b := output.BootstrapBrokerStringSaslIam; b != nil && len(*b) > 0 {
+		log.Info("BootstrapBrokerStringSaslIam found")
+		brokers = b
+	} else {
+		return nil, fmt.Errorf("no bootstrap brokers returned for cluster: %s", clusterName)
+	}
+
+	log.Info("retrieved following cluster brokers: " + *brokers)
+	return brokers, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

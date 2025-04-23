@@ -40,6 +40,8 @@ spec:
           spec:
             description: AwsMSKDemoKafkaTopicSpec defines the desired state of AwsMSKDemoKafkaTopic
             properties:
+              clusterArn:
+                type: string
               name:
                 type: string
               partitions:
@@ -49,6 +51,7 @@ spec:
                 format: int32
                 type: integer
             required:
+            - clusterArn
             - name
             - partitions
             - replicationFactor

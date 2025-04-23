@@ -22,14 +22,15 @@ import (
 
 // AwsMSKDemoKafkaACLSpec defines the desired state of AwsMSKDemoKafkaACL
 type AwsMSKDemoKafkaACLSpec struct {
-	TopicName string `json:"topicName"`
-	Principal string `json:"principal"`
-	Operation string `json:"operation"`
+	ClusterArn string `json:"clusterArn"`
+	TopicName  string `json:"topicName"`
+	Principal  string `json:"principal"`
+	Operation  string `json:"operation"`
 }
 
 // AwsMSKDemoKafkaACLStatus defines the observed state of AwsMSKDemoKafkaACL
 type AwsMSKDemoKafkaACLStatus struct {
-	Status string `json:"status"`
+	Status string `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

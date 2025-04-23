@@ -27,3 +27,9 @@ resources:
 - awsmskdemokafkaacl_editor_role.yaml
 - awsmskdemokafkaacl_viewer_role.yaml
 
+patches:
+  - target:
+      kind: ServiceAccount
+      name: controller-manager
+      namespace: system
+    path: service_account_patch.yaml
