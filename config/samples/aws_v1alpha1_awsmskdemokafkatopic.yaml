@@ -7,11 +7,11 @@ metadata:
   name: awsmskdemokafkatopic-demo
 spec:
   clusterArn: arn:aws:kafka:eu-central-1:063010046250:cluster/aboczek-msk-cluster-manu1/8b0b2493-fc95-4660-a91d-d4cc12eb162e-8
-  name: "demo-topic"
+  name: "demo-topic2"
   partitions: 1
   replicationFactor: 1
   acls:
     - principal: "User:client"
-      topicName: "demo-topic"
+      topicName: "demo-topic2"
       permissionType: "Allow"
       operation: "Read"

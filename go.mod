@@ -3,19 +3,18 @@ module github.com/NTTDATA-DACH/k8s-operator-aws-msk-demo
 go 1.22.0
 
 require (
+	github.com/IBM/sarama v1.45.1
 	github.com/aws/aws-sdk-go-v2 v1.36.3
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/kafka v1.39.2
 	github.com/onsi/ginkgo/v2 v2.19.0
 	github.com/onsi/gomega v1.33.1
-	github.com/segmentio/kafka-go v0.4.47
 	k8s.io/apimachinery v0.31.0
 	k8s.io/client-go v0.31.0
 	sigs.k8s.io/controller-runtime v0.19.0
 )
 
 require (
-	github.com/IBM/sarama v1.45.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20190424111038-f61b66f89f4a // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.67 // indirect

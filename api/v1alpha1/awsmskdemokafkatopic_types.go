@@ -35,7 +35,7 @@ type AwsMSKDemoKafkaTopicSpec struct {
 	ClusterArn        string               `json:"clusterArn"`
 	Name              string               `json:"name"`
 	Partitions        int32                `json:"partitions"`
-	ReplicationFactor int32                `json:"replicationFactor"`
+	ReplicationFactor int16                `json:"replicationFactor"`
 	ACLs              []AwsMSKDemoKafkaACL `json:"acls"`
 }
 

@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/segmentio/kafka-go"
 	"os"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"strings"
@@ -96,14 +95,6 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		log.Error(err, "failed to get cluster brokers: "+err.Error())
 		return ctrl.Result{}, err
 	}
-	prefix := "b-1."
-	broker, found := findFirstByPrefix(brokers, prefix)
-	if !found {
-		msg := fmt.Sprintf("no brokers with prefix %s found", prefix)
-		err = fmt.Errorf(msg)
-		log.Error(err, msg)
-		return ctrl.Result{}, err
-	}
 
 	// Create cluster admin client
 	saramaCfg := sarama.NewConfig()
@@ -118,43 +109,52 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 	r.clusterAdmin, err = sarama.NewClusterAdmin(brokers, saramaCfg)
 	log.Info("cluster admin created")
 
-	// Add finalizer
-	if !controllerutil.ContainsFinalizer(topic, awsmskdemoinstanceFinalizer) {
-		log.Info("adding finalizer for AwsMSKDemoKafkaTopic")
-		topic.Status.Status = awsv1alpha1.StateUpdating
-
-		if ok := controllerutil.AddFinalizer(topic, awsmskdemoinstanceFinalizer); !ok {
-			err = fmt.Errorf("failed to add finalizer into AwsMSKDemoKafkaTopic")
-			log.Error(err, "failed to add finalizer into AwsMSKDemoKafkaTopic")
-			return ctrl.Result{}, err
-		}
-		if err := r.Update(ctx, topic); err != nil {
-			log.Error(err, "failed to update AwsMSKDemoKafkaTopic to add finalizer: "+err.Error())
-			return ctrl.Result{}, err
-		}
-
-		log.Info("added finalizer for AwsMSKDemoKafkaTopic")
-		topic.Status.Status = awsv1alpha1.StateUpdated
-	}
-
 	if !topic.DeletionTimestamp.IsZero() {
-		// Remove topic with finalizer
+		topic.Status.Status = awsv1alpha1.StateDeleting
+
+		// Remove ACLs
+		if err = r.removeKafkaACLs(ctx, topic.Spec.ACLs); err != nil {
+			log.Error(err, "failed to apply ACL: "+err.Error())
+			return ctrl.Result{}, err
+		}
+
+		// Remove topic
+		if err = r.deleteMSKKafkaTopic(ctx, topic); err != nil {
+			log.Error(err, "failed to delete topic: "+err.Error())
+			return ctrl.Result{}, err
+		}
+
+		// Remove finalizer
 		if controllerutil.ContainsFinalizer(topic, awsmskdemoinstanceFinalizer) {
-			topic.Status.Status = awsv1alpha1.StateDeleting
-			if err := r.deleteMSKKafkaTopic(ctx, broker, topic); err != nil {
-				log.Error(err, "failed to delete topic: "+err.Error())
-				return ctrl.Result{}, err
-			}
-			if err := r.removeFinalizer(ctx, topic); err != nil {
+			if err = r.removeFinalizer(ctx, topic); err != nil {
 				log.Error(err, "failed to remove finalizer: "+err.Error())
 				return ctrl.Result{}, err
 			}
-			topic.Status.Status = awsv1alpha1.StateDeleted
 		}
+
+		topic.Status.Status = awsv1alpha1.StateDeleted
 	} else {
-		// Create topic
 		topic.Status.Status = awsv1alpha1.StateCreating
-		err = r.createMSKKafkaTopic(ctx, broker, topic)
+
+		// Add finalizer
+		if !controllerutil.ContainsFinalizer(topic, awsmskdemoinstanceFinalizer) {
+			log.Info("adding finalizer for AwsMSKDemoKafkaTopic")
+
+			if ok := controllerutil.AddFinalizer(topic, awsmskdemoinstanceFinalizer); !ok {
+				err = fmt.Errorf("failed to add finalizer into AwsMSKDemoKafkaTopic")
+				log.Error(err, "failed to add finalizer into AwsMSKDemoKafkaTopic")
+				return ctrl.Result{}, err
+			}
+			if err := r.Update(ctx, topic); err != nil {
+				log.Error(err, "failed to update AwsMSKDemoKafkaTopic to add finalizer: "+err.Error())
+				return ctrl.Result{}, err
+			}
+
+			log.Info("added finalizer for AwsMSKDemoKafkaTopic")
+		}
+
+		// Create topic
+		err = r.createOrUpdateMSKKafkaTopic(ctx, topic)
 		if err != nil {
 			log.Error(err, "failed to create topic: "+topic.Spec.Name)
 			return ctrl.Result{}, err
@@ -170,35 +170,35 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 	return ctrl.Result{}, nil
 }
 
-func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context, broker string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
+func (r *AwsMSKDemoKafkaTopicReconciler) createOrUpdateMSKKafkaTopic(ctx context.Context, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
 	log := log.FromContext(ctx)
-	log.Info("trying to create topic: " + topic.Spec.Name)
 
-	// Create dialer
-	dialer, err := r.createDialerConfig(ctx)
+	topics, err := r.clusterAdmin.DescribeTopics([]string{topic.Spec.Name})
 	if err != nil {
-		return err
+		// Topic not found or error, try to create
+		log.Info("trying to create topic: " + topic.Spec.Name)
+		detail := &sarama.TopicDetail{
+			NumPartitions:     topic.Spec.Partitions,
+			ReplicationFactor: topic.Spec.ReplicationFactor,
+		}
+		if err = r.clusterAdmin.CreateTopic(topic.Spec.Name, detail, false); err != nil {
+			log.Error(err, "create topic failed: "+err.Error())
+			return err
+		}
+		log.Info("topic created: " + topic.Spec.Name)
+	} else {
+		// Topic exists, try to update
+		log.Info("trying to update topic: " + topic.Spec.Name)
+		existingPartitions := int32(len(topics[0].Partitions))
+		if topic.Spec.Partitions > existingPartitions {
+			if err = r.clusterAdmin.CreatePartitions(topic.Spec.Name, topic.Spec.Partitions, nil, false); err != nil {
+				log.Error(err, "updating partitions failed: "+err.Error())
+				return err
+			}
+		}
+		log.Info("topic updated: " + topic.Spec.Name)
 	}
 
-	// Create connection
-	log.Info("trying to dial broker: " + broker)
-	conn, err := dialer.Dial("tcp", broker)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	// Create topic
-	err = conn.CreateTopics(kafka.TopicConfig{
-		Topic:             topic.Spec.Name,
-		NumPartitions:     int(topic.Spec.Partitions),
-		ReplicationFactor: int(topic.Spec.ReplicationFactor),
-	})
-	if err != nil {
-		return err
-	}
-
-	log.Info("topic created: " + topic.Spec.Name)
 	return nil
 }
 
@@ -221,6 +221,32 @@ func (r *AwsMSKDemoKafkaTopicReconciler) applyKafkaACLs(ctx context.Context, acl
 			Operation:      op,
 		}
 		err := r.clusterAdmin.CreateACL(res, entry)
+		if err != nil {
+			log.Error(err, "failed to apply ACL: "+err.Error())
+			return err
+		}
+	}
+
+	log.Info("acls applied")
+	return nil
+}
+
+func (r *AwsMSKDemoKafkaTopicReconciler) removeKafkaACLs(ctx context.Context, acls []awsv1alpha1.AwsMSKDemoKafkaACL) error {
+	log := log.FromContext(ctx)
+	log.Info("trying to apply acls")
+
+	for _, acl := range acls {
+		pt, op := r.getACLPermissionTypeAndOperation(acl)
+		log.Info(fmt.Sprintf("got acl for topic %s: %s for %s", acl.TopicName, pt.String(), op.String()))
+
+		filter := sarama.AclFilter{
+			Principal:      &acl.Principal,
+			Operation:      op,
+			PermissionType: pt,
+			ResourceName:   &acl.TopicName,
+			ResourceType:   sarama.AclResourceTopic,
+		}
+		_, err := r.clusterAdmin.DeleteACL(filter, false)
 		if err != nil {
 			log.Error(err, "failed to apply ACL: "+err.Error())
 			return err
@@ -254,27 +280,12 @@ func (r *AwsMSKDemoKafkaTopicReconciler) getACLPermissionTypeAndOperation(acl aw
 	return permType, op
 }
 
-func (r *AwsMSKDemoKafkaTopicReconciler) deleteMSKKafkaTopic(ctx context.Context, broker string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
+func (r *AwsMSKDemoKafkaTopicReconciler) deleteMSKKafkaTopic(ctx context.Context, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
 	log := log.FromContext(ctx)
 	log.Info("trying to delete topic: " + topic.Spec.Name)
 
-	// Create dialer
-	dialer, err := r.createDialerConfig(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Create connection
-	log.Info("trying to dial broker: " + broker)
-	conn, err := dialer.Dial("tcp", broker)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	// Delete topic
-	err = conn.DeleteTopics(topic.Spec.Name)
-	if err != nil {
+	if err := r.clusterAdmin.DeleteTopic(topic.Spec.Name); err != nil {
+		log.Error(err, "failed to delete topic: "+err.Error())
 		return err
 	}
 
@@ -337,18 +348,6 @@ func (r *AwsMSKDemoKafkaTopicReconciler) getMSKClusterBrokers(ctx context.Contex
 	return strings.Split(*brokers, ","), nil
 }
 
-func (r *AwsMSKDemoKafkaTopicReconciler) createDialerConfig(ctx context.Context) (*kafka.Dialer, error) {
-	tlsCfg, err := r.createTlsConfig(ctx)
-	if err != nil {
-		return nil, err
-	}
-	dialer := &kafka.Dialer{
-		TLS: tlsCfg,
-	}
-
-	return dialer, nil
-}
-
 func (r *AwsMSKDemoKafkaTopicReconciler) createTlsConfig(ctx context.Context) (*tls.Config, error) {
 	// Load TLS certificates
 	cert, err := r.loadCertificate(ctx)
@@ -403,13 +402,4 @@ func (r *AwsMSKDemoKafkaTopicReconciler) SetupWithManager(mgr ctrl.Manager) erro
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&awsv1alpha1.AwsMSKDemoKafkaTopic{}).
 		Complete(r)
-}
-
-func findFirstByPrefix(input []string, prefix string) (string, bool) {
-	for _, str := range input {
-		if strings.HasPrefix(str, prefix) {
-			return str, true
-		}
-	}
-	return "", false
 }
