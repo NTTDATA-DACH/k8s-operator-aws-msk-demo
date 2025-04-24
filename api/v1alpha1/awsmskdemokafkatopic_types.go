@@ -32,10 +32,17 @@ const (
 
 // AwsMSKDemoKafkaTopicSpec defines the desired state of AwsMSKDemoKafkaTopic
 type AwsMSKDemoKafkaTopicSpec struct {
-	ClusterArn        string `json:"clusterArn"`
-	Name              string `json:"name"`
-	Partitions        int32  `json:"partitions"`
-	ReplicationFactor int32  `json:"replicationFactor"`
+	ClusterArn        string               `json:"clusterArn"`
+	Name              string               `json:"name"`
+	Partitions        int32                `json:"partitions"`
+	ReplicationFactor int32                `json:"replicationFactor"`
+	ACLs              []AwsMSKDemoKafkaACL `json:"acls"`
+}
+
+type AwsMSKDemoKafkaACL struct {
+	Principal string `json:"principal"`
+	Operation string `json:"operation"`
+	Resource  string `json:"resource"`
 }
 
 // AwsMSKDemoKafkaTopicStatus defines the observed state of AwsMSKDemoKafkaTopic

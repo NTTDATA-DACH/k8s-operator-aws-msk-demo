@@ -10,3 +10,7 @@ spec:
   name: "demo-topic"
   partitions: 1
   replicationFactor: 1
+  acls:
+    - principal: "User:client"
+      operation: "Read"
+      resource: "demo-topic"

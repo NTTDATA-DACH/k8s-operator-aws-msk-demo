@@ -7,7 +7,6 @@ rules:
 - apiGroups:
   - aws.nttdata.com
   resources:
-  - awsmskdemokafkaacls
   - awsmskdemokafkatopics
   verbs:
   - create
@@ -20,14 +19,12 @@ rules:
 - apiGroups:
   - aws.nttdata.com
   resources:
-  - awsmskdemokafkaacls/finalizers
   - awsmskdemokafkatopics/finalizers
   verbs:
   - update
 - apiGroups:
   - aws.nttdata.com
   resources:
-  - awsmskdemokafkaacls/status
   - awsmskdemokafkatopics/status
   verbs:
   - get

@@ -40,6 +40,21 @@ spec:
           spec:
             description: AwsMSKDemoKafkaTopicSpec defines the desired state of AwsMSKDemoKafkaTopic
             properties:
+              acls:
+                items:
+                  properties:
+                    operation:
+                      type: string
+                    principal:
+                      type: string
+                    resource:
+                      type: string
+                  required:
+                  - operation
+                  - principal
+                  - resource
+                  type: object
+                type: array
               clusterArn:
                 type: string
               name:
@@ -51,6 +66,7 @@ spec:
                 format: int32
                 type: integer
             required:
+            - acls
             - clusterArn
             - name
             - partitions

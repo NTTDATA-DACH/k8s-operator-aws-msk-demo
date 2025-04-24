@@ -34,9 +34,6 @@ import (
 
 	awsCfg "github.com/aws/aws-sdk-go-v2/config"
 	awsKafka "github.com/aws/aws-sdk-go-v2/service/kafka"
-	// awsKafkaTypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-
-	// corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	awsv1alpha1 "github.com/NTTDATA-DACH/k8s-operator-aws-msk-demo/api/v1alpha1"
@@ -65,7 +62,6 @@ type AwsMSKDemoKafkaTopicReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
-
 	log.Info(fmt.Sprintf("reconcile triggered for '%s' in namespace '%s'...", req.Name, req.Namespace))
 
 	// Fetch the AwsMSKDemoKafkaTopic topic
@@ -134,11 +130,13 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		}
 	} else {
 		// Create topic
+		topic.Status.Status = awsv1alpha1.StateCreating
 		err = r.createMSKKafkaTopic(ctx, broker, topic)
 		if err != nil {
 			log.Error(err, "failed to create topic: "+topic.Spec.Name)
 			return ctrl.Result{}, err
 		}
+		topic.Status.Status = awsv1alpha1.StateCreated
 	}
 
 	log.Info("reconcile finished...")

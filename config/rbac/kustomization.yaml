@@ -24,8 +24,6 @@ resources:
 # if you do not want those helpers be installed with your Project.
 - awsmskdemokafkatopic_editor_role.yaml
 - awsmskdemokafkatopic_viewer_role.yaml
-- awsmskdemokafkaacl_editor_role.yaml
-- awsmskdemokafkaacl_viewer_role.yaml
 
 patches:
   - target:
