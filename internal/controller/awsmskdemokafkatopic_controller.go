@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/segmentio/kafka-go"
 	"os"
@@ -39,7 +40,12 @@ import (
 	awsv1alpha1 "github.com/NTTDATA-DACH/k8s-operator-aws-msk-demo/api/v1alpha1"
 )
 
-const awsmskdemoinstanceFinalizer = "aws.nttdata.com/finalizer"
+const (
+	awsmskdemoinstanceFinalizer = "aws.nttdata.com/finalizer"
+	sslKeyLocation              = "/certs/client.key"
+	sslCertLocation             = "/certs/client.crt"
+	sslCALocation               = "/certs/ca.crt"
+)
 
 // AwsMSKDemoKafkaTopicReconciler reconciles a AwsMSKDemoKafkaTopic object
 type AwsMSKDemoKafkaTopicReconciler struct {
@@ -83,15 +89,18 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 	r.kafkaClient = awsKafka.NewFromConfig(cfg)
 
+	// Find brokers
 	brokers, err := r.getMSKClusterBrokers(ctx, topic.Spec.ClusterArn)
 	if err != nil {
 		log.Error(err, "failed to get cluster brokers: "+err.Error())
 		return ctrl.Result{}, err
 	}
-	broker, found := findFirstByPrefix(brokers, "b-1.")
+	prefix := "b-1."
+	broker, found := findFirstByPrefix(brokers, prefix)
 	if !found {
-		err := fmt.Errorf("no brokers with prefix b-1 found")
-		log.Error(err, "no brokers with prefix b-1 found")
+		msg := fmt.Sprintf("no brokers with prefix %s found", prefix)
+		err = fmt.Errorf(msg)
+		log.Error(err, msg)
 		return ctrl.Result{}, err
 	}
 
@@ -136,6 +145,15 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 			log.Error(err, "failed to create topic: "+topic.Spec.Name)
 			return ctrl.Result{}, err
 		}
+		for _, acl := range topic.Spec.ACLs {
+			r.getACLPermissionTypeAndOperation(acl)
+		}
+		/*
+			err = r.applyKafkaACLs(ctx, broker, topic.Spec.ACLs)
+			if err != nil {
+				log.Error(err, "failed to apply ACLs: "+err.Error())
+			}
+		*/
 		topic.Status.Status = awsv1alpha1.StateCreated
 	}
 
@@ -174,6 +192,90 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context
 	log.Info("topic created: " + topic.Spec.Name)
 	return nil
 }
+
+func (r *AwsMSKDemoKafkaTopicReconciler) getACLPermissionTypeAndOperation(acl awsv1alpha1.AwsMSKDemoKafkaACL) (sarama.AclPermissionType, sarama.AclOperation) {
+
+	permType := sarama.AclPermissionUnknown
+	switch strings.ToLower(acl.PermissionType) {
+	case "allow":
+		permType = sarama.AclPermissionAllow
+	case "deny":
+		permType = sarama.AclPermissionDeny
+	}
+
+	op := sarama.AclOperationUnknown
+	switch strings.ToLower(acl.Operation) {
+	case "read":
+		op = sarama.AclOperationRead
+	case "write":
+		op = sarama.AclOperationWrite
+	case "all":
+		op = sarama.AclOperationAll
+	}
+
+	return permType, op
+}
+
+/*
+func (r *AwsMSKDemoKafkaTopicReconciler) applyKafkaACLs(ctx context.Context, broker string, acls []awsv1alpha1.AwsMSKDemoKafkaACL) error {
+	log := log.FromContext(ctx)
+	log.Info("trying to apply acls")
+
+	// Define ACL bindings based on spec
+	var aclbs []confKafka.ACLBinding
+	for _, acl := range acls {
+		op := confKafka.ACLOperationUnknown
+		switch strings.ToLower(acl.Operation) {
+		case "read":
+			op = confKafka.ACLOperationRead
+		case "write":
+			op = confKafka.ACLOperationWrite
+		case "all":
+			op = confKafka.ACLOperationAll
+		}
+
+		binding := confKafka.ACLBinding{
+			Type:           confKafka.ResourceTopic,
+			Name:           acl.TopicName,
+			Principal:      acl.Principal,
+			Operation:      op,
+			PermissionType: confKafka.ACLPermissionTypeAllow,
+		}
+		aclbs = append(aclbs, binding)
+	}
+
+	// Create admin client
+	config := &confKafka.ConfigMap{
+		"bootstrap.servers":        broker,
+		"security.protocol":        "SSL",
+		"ssl.key.location":         sslKeyLocation,
+		"ssl.certificate.location": sslCertLocation,
+		"ssl.ca.location":          sslCALocation,
+	}
+	admin, err := confKafka.NewAdminClient(config)
+	if err != nil {
+		log.Error(err, "cannot create Kafka admin client"+err.Error())
+		return err
+	}
+	defer admin.Close()
+
+	// Apply ACLs
+	results, err := admin.CreateACLs(ctx, aclbs)
+	if err != nil {
+		log.Error(err, "cannot apply acl bindings"+err.Error())
+		return err
+	}
+	for _, res := range results {
+		if res.Error.Code() != confKafka.ErrNoError {
+			err = fmt.Errorf("error when creating acl with code %s: %s", res.Error.Code(), res.Error.String())
+			return err
+		}
+	}
+
+	log.Info("acls applied")
+	return nil
+}
+*/
 
 func (r *AwsMSKDemoKafkaTopicReconciler) deleteMSKKafkaTopic(ctx context.Context, broker string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
 	log := log.FromContext(ctx)
@@ -259,6 +361,18 @@ func (r *AwsMSKDemoKafkaTopicReconciler) getMSKClusterBrokers(ctx context.Contex
 }
 
 func (r *AwsMSKDemoKafkaTopicReconciler) createDialerConfig(ctx context.Context) (*kafka.Dialer, error) {
+	tlsCfg, err := r.createTlsConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &kafka.Dialer{
+		TLS: tlsCfg,
+	}
+
+	return dialer, nil
+}
+
+func (r *AwsMSKDemoKafkaTopicReconciler) createTlsConfig(ctx context.Context) (*tls.Config, error) {
 	// Load TLS certificates
 	cert, err := r.loadCertificate(ctx)
 	if err != nil {
@@ -269,24 +383,18 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createDialerConfig(ctx context.Context)
 		return nil, err
 	}
 
-	// Create dialer
-	tlsCfg := &tls.Config{
+	return &tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		RootCAs:            ca,
 		InsecureSkipVerify: true,
-	}
-	dialer := &kafka.Dialer{
-		TLS: tlsCfg,
-	}
-
-	return dialer, nil
+	}, nil
 }
 
 func (r *AwsMSKDemoKafkaTopicReconciler) loadCertificate(ctx context.Context) (tls.Certificate, error) {
 	log := log.FromContext(ctx)
 	log.Info("trying to load certificate")
 
-	cert, err := tls.LoadX509KeyPair("/certs/client.crt", "/certs/client.key")
+	cert, err := tls.LoadX509KeyPair(sslCertLocation, sslKeyLocation)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
@@ -299,7 +407,7 @@ func (r *AwsMSKDemoKafkaTopicReconciler) loadRootCA(ctx context.Context) (*x509.
 	log := log.FromContext(ctx)
 	log.Info("trying to load root ca")
 
-	caCert, err := os.ReadFile("/certs/ca.crt")
+	caCert, err := os.ReadFile(sslCALocation)
 	if err != nil {
 		return nil, err
 	}
@@ -323,8 +431,8 @@ func (r *AwsMSKDemoKafkaTopicReconciler) SetupWithManager(mgr ctrl.Manager) erro
 func findFirstByPrefix(input []string, prefix string) (string, bool) {
 	for _, str := range input {
 		if strings.HasPrefix(str, prefix) {
-			return str, true // Return the first match and true for success
+			return str, true
 		}
 	}
-	return "", false // Return empty string and false if no match is found
+	return "", false
 }

@@ -45,14 +45,17 @@ spec:
                   properties:
                     operation:
                       type: string
+                    permissionType:
+                      type: string
                     principal:
                       type: string
-                    resource:
+                    topicName:
                       type: string
                   required:
                   - operation
+                  - permissionType
                   - principal
-                  - resource
+                  - topicName
                   type: object
                 type: array
               clusterArn:

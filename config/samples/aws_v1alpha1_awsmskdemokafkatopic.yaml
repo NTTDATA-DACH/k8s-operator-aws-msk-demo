@@ -12,5 +12,6 @@ spec:
   replicationFactor: 1
   acls:
     - principal: "User:client"
+      topicName: "demo-topic"
+      permissionType: "Allow"
       operation: "Read"
-      resource: "demo-topic"

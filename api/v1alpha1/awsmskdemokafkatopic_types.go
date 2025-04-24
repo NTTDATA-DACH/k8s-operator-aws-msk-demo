@@ -40,9 +40,10 @@ type AwsMSKDemoKafkaTopicSpec struct {
 }
 
 type AwsMSKDemoKafkaACL struct {
-	Principal string `json:"principal"`
-	Operation string `json:"operation"`
-	Resource  string `json:"resource"`
+	Principal      string `json:"principal"`
+	TopicName      string `json:"topicName"`
+	PermissionType string `json:"permissionType"`
+	Operation      string `json:"operation"`
 }
 
 // AwsMSKDemoKafkaTopicStatus defines the observed state of AwsMSKDemoKafkaTopic
