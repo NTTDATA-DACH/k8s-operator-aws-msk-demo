@@ -50,8 +50,9 @@ const (
 // AwsMSKDemoKafkaTopicReconciler reconciles a AwsMSKDemoKafkaTopic object
 type AwsMSKDemoKafkaTopicReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	kafkaClient *awsKafka.Client
+	Scheme       *runtime.Scheme
+	kafkaClient  *awsKafka.Client
+	clusterAdmin sarama.ClusterAdmin
 }
 
 // +kubebuilder:rbac:groups=aws.nttdata.com,resources=awsmskdemokafkatopics,verbs=get;list;watch;create;update;patch;delete
@@ -104,6 +105,19 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
+	// Create cluster admin client
+	saramaCfg := sarama.NewConfig()
+	saramaCfg.Version = sarama.V3_6_0_0 // for PoC purposes only
+
+	tslCfg, err := r.createTlsConfig(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	saramaCfg.Net.TLS.Enable = true
+	saramaCfg.Net.TLS.Config = tslCfg
+	r.clusterAdmin, err = sarama.NewClusterAdmin(brokers, saramaCfg)
+	log.Info("cluster admin created")
+
 	// Add finalizer
 	if !controllerutil.ContainsFinalizer(topic, awsmskdemoinstanceFinalizer) {
 		log.Info("adding finalizer for AwsMSKDemoKafkaTopic")
@@ -145,15 +159,10 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 			log.Error(err, "failed to create topic: "+topic.Spec.Name)
 			return ctrl.Result{}, err
 		}
-		for _, acl := range topic.Spec.ACLs {
-			r.getACLPermissionTypeAndOperation(acl)
+		err = r.applyKafkaACLs(ctx, topic.Spec.ACLs)
+		if err != nil {
+			log.Error(err, "failed to apply ACLs: "+err.Error())
 		}
-		/*
-			err = r.applyKafkaACLs(ctx, broker, topic.Spec.ACLs)
-			if err != nil {
-				log.Error(err, "failed to apply ACLs: "+err.Error())
-			}
-		*/
 		topic.Status.Status = awsv1alpha1.StateCreated
 	}
 
@@ -193,6 +202,35 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createMSKKafkaTopic(ctx context.Context
 	return nil
 }
 
+func (r *AwsMSKDemoKafkaTopicReconciler) applyKafkaACLs(ctx context.Context, acls []awsv1alpha1.AwsMSKDemoKafkaACL) error {
+	log := log.FromContext(ctx)
+	log.Info("trying to apply acls")
+
+	for _, acl := range acls {
+		pt, op := r.getACLPermissionTypeAndOperation(acl)
+		log.Info(fmt.Sprintf("got acl for topic %s: %s for %s", acl.TopicName, pt.String(), op.String()))
+
+		res := sarama.Resource{
+			ResourceType:        sarama.AclResourceTopic,
+			ResourceName:        acl.TopicName,
+			ResourcePatternType: sarama.AclPatternLiteral,
+		}
+		entry := sarama.Acl{
+			Principal:      acl.Principal,
+			PermissionType: pt,
+			Operation:      op,
+		}
+		err := r.clusterAdmin.CreateACL(res, entry)
+		if err != nil {
+			log.Error(err, "failed to apply ACL: "+err.Error())
+			return err
+		}
+	}
+
+	log.Info("acls applied")
+	return nil
+}
+
 func (r *AwsMSKDemoKafkaTopicReconciler) getACLPermissionTypeAndOperation(acl awsv1alpha1.AwsMSKDemoKafkaACL) (sarama.AclPermissionType, sarama.AclOperation) {
 
 	permType := sarama.AclPermissionUnknown
@@ -215,67 +253,6 @@ func (r *AwsMSKDemoKafkaTopicReconciler) getACLPermissionTypeAndOperation(acl aw
 
 	return permType, op
 }
-
-/*
-func (r *AwsMSKDemoKafkaTopicReconciler) applyKafkaACLs(ctx context.Context, broker string, acls []awsv1alpha1.AwsMSKDemoKafkaACL) error {
-	log := log.FromContext(ctx)
-	log.Info("trying to apply acls")
-
-	// Define ACL bindings based on spec
-	var aclbs []confKafka.ACLBinding
-	for _, acl := range acls {
-		op := confKafka.ACLOperationUnknown
-		switch strings.ToLower(acl.Operation) {
-		case "read":
-			op = confKafka.ACLOperationRead
-		case "write":
-			op = confKafka.ACLOperationWrite
-		case "all":
-			op = confKafka.ACLOperationAll
-		}
-
-		binding := confKafka.ACLBinding{
-			Type:           confKafka.ResourceTopic,
-			Name:           acl.TopicName,
-			Principal:      acl.Principal,
-			Operation:      op,
-			PermissionType: confKafka.ACLPermissionTypeAllow,
-		}
-		aclbs = append(aclbs, binding)
-	}
-
-	// Create admin client
-	config := &confKafka.ConfigMap{
-		"bootstrap.servers":        broker,
-		"security.protocol":        "SSL",
-		"ssl.key.location":         sslKeyLocation,
-		"ssl.certificate.location": sslCertLocation,
-		"ssl.ca.location":          sslCALocation,
-	}
-	admin, err := confKafka.NewAdminClient(config)
-	if err != nil {
-		log.Error(err, "cannot create Kafka admin client"+err.Error())
-		return err
-	}
-	defer admin.Close()
-
-	// Apply ACLs
-	results, err := admin.CreateACLs(ctx, aclbs)
-	if err != nil {
-		log.Error(err, "cannot apply acl bindings"+err.Error())
-		return err
-	}
-	for _, res := range results {
-		if res.Error.Code() != confKafka.ErrNoError {
-			err = fmt.Errorf("error when creating acl with code %s: %s", res.Error.Code(), res.Error.String())
-			return err
-		}
-	}
-
-	log.Info("acls applied")
-	return nil
-}
-*/
 
 func (r *AwsMSKDemoKafkaTopicReconciler) deleteMSKKafkaTopic(ctx context.Context, broker string, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
 	log := log.FromContext(ctx)
