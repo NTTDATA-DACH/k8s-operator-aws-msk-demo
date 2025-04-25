@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"os"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -79,7 +80,7 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		}
 		return ctrl.Result{}, err
 	}
-	log.Info("found: " + topic.Name)
+	log.Info(fmt.Sprintf("found topic: % in status: %s", topic.Name, topic.Status.Status))
 
 	// Create Kafka client
 	cfg, err := awsCfg.LoadDefaultConfig(ctx)
@@ -156,7 +157,6 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		// Create topic
 		err = r.createOrUpdateMSKKafkaTopic(ctx, topic)
 		if err != nil {
-			log.Error(err, "failed to create topic: "+topic.Spec.Name)
 			return ctrl.Result{}, err
 		}
 		err = r.applyKafkaACLs(ctx, topic.Spec.ACLs)
@@ -174,8 +174,13 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createOrUpdateMSKKafkaTopic(ctx context
 	log := log.FromContext(ctx)
 
 	topics, err := r.clusterAdmin.DescribeTopics([]string{topic.Spec.Name})
-	if err != nil {
+	log.Info("DEBUG: len(topic): " + strconv.Itoa(len(topics)))
+	if len(topics) == 1 {
+		log.Info(fmt.Sprintf("DEBUG topics[0].Name: %s, err: %s", topics[0].Name, topics[0].Err.Error()))
+	}
+	if err != nil || len(topics) == 0 || topics[0].Err != sarama.ErrNoError {
 		// Topic not found or error, try to create
+		topic.Status.Status = awsv1alpha1.StateCreating
 		log.Info("trying to create topic: " + topic.Spec.Name)
 		detail := &sarama.TopicDetail{
 			NumPartitions:     topic.Spec.Partitions,
@@ -185,9 +190,11 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createOrUpdateMSKKafkaTopic(ctx context
 			log.Error(err, "create topic failed: "+err.Error())
 			return err
 		}
+		topic.Status.Status = awsv1alpha1.StateCreated
 		log.Info("topic created: " + topic.Spec.Name)
 	} else {
 		// Topic exists, try to update
+		topic.Status.Status = awsv1alpha1.StateUpdating
 		log.Info("trying to update topic: " + topic.Spec.Name)
 		existingPartitions := int32(len(topics[0].Partitions))
 		if topic.Spec.Partitions > existingPartitions {
@@ -196,6 +203,7 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createOrUpdateMSKKafkaTopic(ctx context
 				return err
 			}
 		}
+		topic.Status.Status = awsv1alpha1.StateUpdated
 		log.Info("topic updated: " + topic.Spec.Name)
 	}
 
