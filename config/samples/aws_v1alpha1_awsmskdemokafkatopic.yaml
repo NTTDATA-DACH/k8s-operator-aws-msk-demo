@@ -4,18 +4,19 @@ metadata:
   labels:
     app.kubernetes.io/name: k8s-operator-aws-msk-demo
     app.kubernetes.io/managed-by: kustomize
-  name: awsmskdemokafkatopic-demo0
+  name: awsmskdemokafkatopic16-demo
 spec:
   clusterArn: arn:aws:kafka:eu-central-1:063010046250:cluster/aboczek-msk-cluster-manu1/8b0b2493-fc95-4660-a91d-d4cc12eb162e-8
-  name: "demo-topic0"
-  partitions: 1
+  name: "demo-topic16"
+  partitions: 2
   replicationFactor: 3
   acls:
-    - principal: "User:consumer"
-      topicName: "demo-topic0"
+    - principal: "User:*.aboczekmskclusterma.7tm7x5.c8.kafka.eu-central-1.amazonaws.com"
+      permissionType: "Allow"
+      operation: "Describe"
+    - principal: "User:*.aboczekmskclusterma.7tm7x5.c8.kafka.eu-central-1.amazonaws.com"
       permissionType: "Allow"
       operation: "Read"
-    - principal: "User:producer"
-      topicName: "demo-topic0"
+    - principal: "User:*.aboczekmskclusterma.7tm7x5.c8.kafka.eu-central-1.amazonaws.com"
       permissionType: "Allow"
       operation: "Write"

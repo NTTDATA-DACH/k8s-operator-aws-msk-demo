@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"os"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"strconv"
 	"strings"
 
@@ -80,7 +81,7 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		}
 		return ctrl.Result{}, err
 	}
-	log.Info(fmt.Sprintf("found topic: % in status: %s", topic.Name, topic.Status.Status))
+	log.Info("found topic: " + topic.Name)
 
 	// Create Kafka client
 	cfg, err := awsCfg.LoadDefaultConfig(ctx)
@@ -98,15 +99,11 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 
 	// Create cluster admin client
-	saramaCfg := sarama.NewConfig()
-	saramaCfg.Version = sarama.V3_6_0_0 // for PoC purposes only
-
-	tslCfg, err := r.createTlsConfig(ctx)
+	saramaCfg, err := r.createSaramaConfig(ctx)
 	if err != nil {
+		log.Error(err, "failed to sarama config: "+err.Error())
 		return ctrl.Result{}, err
 	}
-	saramaCfg.Net.TLS.Enable = true
-	saramaCfg.Net.TLS.Config = tslCfg
 	r.clusterAdmin, err = sarama.NewClusterAdmin(brokers, saramaCfg)
 	log.Info("cluster admin created")
 
@@ -114,8 +111,8 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		topic.Status.Status = awsv1alpha1.StateDeleting
 
 		// Remove ACLs
-		if err = r.removeKafkaACLs(ctx, topic.Spec.ACLs); err != nil {
-			log.Error(err, "failed to apply ACL: "+err.Error())
+		if err = r.removeKafkaACLs(ctx, topic); err != nil {
+			log.Error(err, "failed to remove ACLs: "+err.Error())
 			return ctrl.Result{}, err
 		}
 
@@ -159,7 +156,7 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		err = r.applyKafkaACLs(ctx, topic.Spec.ACLs)
+		err = r.applyKafkaACLs(ctx, topic)
 		if err != nil {
 			log.Error(err, "failed to apply ACLs: "+err.Error())
 		}
@@ -174,24 +171,37 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createOrUpdateMSKKafkaTopic(ctx context
 	log := log.FromContext(ctx)
 
 	topics, err := r.clusterAdmin.DescribeTopics([]string{topic.Spec.Name})
+	if err != nil {
+		return err
+	}
+
 	log.Info("DEBUG: len(topic): " + strconv.Itoa(len(topics)))
 	if len(topics) == 1 {
 		log.Info(fmt.Sprintf("DEBUG topics[0].Name: %s, err: %s", topics[0].Name, topics[0].Err.Error()))
 	}
-	if err != nil || len(topics) == 0 || topics[0].Err != sarama.ErrNoError {
-		// Topic not found or error, try to create
-		topic.Status.Status = awsv1alpha1.StateCreating
-		log.Info("trying to create topic: " + topic.Spec.Name)
-		detail := &sarama.TopicDetail{
-			NumPartitions:     topic.Spec.Partitions,
-			ReplicationFactor: topic.Spec.ReplicationFactor,
+
+	saramaErr := topics[0].Err
+	if len(topics) == 0 || saramaErr != sarama.ErrNoError {
+		if saramaErr == sarama.ErrUnknownTopicOrPartition {
+			// Topic not found or error, try to create
+			topic.Status.Status = awsv1alpha1.StateCreating
+			log.Info("trying to create topic: " + topic.Spec.Name)
+			detail := &sarama.TopicDetail{
+				NumPartitions:     topic.Spec.Partitions,
+				ReplicationFactor: topic.Spec.ReplicationFactor,
+			}
+			if err = r.clusterAdmin.CreateTopic(topic.Spec.Name, detail, false); err != nil {
+				log.Error(err, "create topic failed: "+err.Error())
+				return err
+			}
+			topic.Status.Status = awsv1alpha1.StateCreated
+			log.Info("topic created: " + topic.Spec.Name)
+			return nil
 		}
-		if err = r.clusterAdmin.CreateTopic(topic.Spec.Name, detail, false); err != nil {
-			log.Error(err, "create topic failed: "+err.Error())
-			return err
-		}
-		topic.Status.Status = awsv1alpha1.StateCreated
-		log.Info("topic created: " + topic.Spec.Name)
+		msg := "sarama error: " + saramaErr.Error()
+		err = fmt.Errorf(msg)
+		log.Error(err, msg)
+		return err
 	} else {
 		// Topic exists, try to update
 		topic.Status.Status = awsv1alpha1.StateUpdating
@@ -210,58 +220,63 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createOrUpdateMSKKafkaTopic(ctx context
 	return nil
 }
 
-func (r *AwsMSKDemoKafkaTopicReconciler) applyKafkaACLs(ctx context.Context, acls []awsv1alpha1.AwsMSKDemoKafkaACL) error {
+func (r *AwsMSKDemoKafkaTopicReconciler) applyKafkaACLs(ctx context.Context, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
 	log := log.FromContext(ctx)
-	log.Info("trying to apply acls")
+	log.Info("trying to apply acls to topic")
 
-	for _, acl := range acls {
-		pt, op := r.getACLPermissionTypeAndOperation(acl)
-		log.Info(fmt.Sprintf("got acl for topic %s: %s for %s", acl.TopicName, pt.String(), op.String()))
-
-		res := sarama.Resource{
-			ResourceType:        sarama.AclResourceTopic,
-			ResourceName:        acl.TopicName,
-			ResourcePatternType: sarama.AclPatternLiteral,
-		}
-		entry := sarama.Acl{
-			Principal:      acl.Principal,
-			PermissionType: pt,
-			Operation:      op,
-		}
-		err := r.clusterAdmin.CreateACL(res, entry)
-		if err != nil {
-			log.Error(err, "failed to apply ACL: "+err.Error())
-			return err
-		}
+	resource := sarama.Resource{
+		ResourceType:        sarama.AclResourceTopic,
+		ResourceName:        topic.Spec.Name,
+		ResourcePatternType: sarama.AclPatternLiteral,
 	}
 
-	log.Info("acls applied")
+	var acls []*sarama.Acl
+	for _, sacl := range topic.Spec.ACLs {
+		pt, op := r.getACLPermissionTypeAndOperation(sacl)
+		log.Info(fmt.Sprintf("got acl for topic %s: %s for %s", topic.Spec.Name, pt.String(), op.String()))
+		acl := sarama.Acl{
+			PermissionType: pt,
+			Operation:      op,
+			Principal:      sacl.Principal,
+		}
+		acls = append(acls, &acl)
+	}
+	rsacls := []*sarama.ResourceAcls{
+		{
+			Resource: resource,
+			Acls:     acls,
+		},
+	}
+	err := r.clusterAdmin.CreateACLs(rsacls)
+	if err != nil {
+		return err
+	}
+
+	log.Info("acls applied to topic")
 	return nil
 }
 
-func (r *AwsMSKDemoKafkaTopicReconciler) removeKafkaACLs(ctx context.Context, acls []awsv1alpha1.AwsMSKDemoKafkaACL) error {
+func (r *AwsMSKDemoKafkaTopicReconciler) removeKafkaACLs(ctx context.Context, topic *awsv1alpha1.AwsMSKDemoKafkaTopic) error {
 	log := log.FromContext(ctx)
-	log.Info("trying to apply acls")
+	log.Info("trying to remove acls for topic: " + topic.Name)
 
-	for _, acl := range acls {
+	for _, acl := range topic.Spec.ACLs {
 		pt, op := r.getACLPermissionTypeAndOperation(acl)
-		log.Info(fmt.Sprintf("got acl for topic %s: %s for %s", acl.TopicName, pt.String(), op.String()))
-
 		filter := sarama.AclFilter{
 			Principal:      &acl.Principal,
 			Operation:      op,
 			PermissionType: pt,
-			ResourceName:   &acl.TopicName,
+			ResourceName:   &topic.Name,
 			ResourceType:   sarama.AclResourceTopic,
 		}
 		_, err := r.clusterAdmin.DeleteACL(filter, false)
 		if err != nil {
-			log.Error(err, "failed to apply ACL: "+err.Error())
+			log.Error(err, "failed to remove ACLs: "+err.Error())
 			return err
 		}
 	}
 
-	log.Info("acls applied")
+	log.Info("acls removed")
 	return nil
 }
 
@@ -277,10 +292,16 @@ func (r *AwsMSKDemoKafkaTopicReconciler) getACLPermissionTypeAndOperation(acl aw
 
 	op := sarama.AclOperationUnknown
 	switch strings.ToLower(acl.Operation) {
+	case "describe":
+		op = sarama.AclOperationDescribe
 	case "read":
 		op = sarama.AclOperationRead
 	case "write":
 		op = sarama.AclOperationWrite
+	case "create":
+		op = sarama.AclOperationCreate
+	case "delete":
+		op = sarama.AclOperationDelete
 	case "all":
 		op = sarama.AclOperationAll
 	}
@@ -356,6 +377,28 @@ func (r *AwsMSKDemoKafkaTopicReconciler) getMSKClusterBrokers(ctx context.Contex
 	return strings.Split(*brokers, ","), nil
 }
 
+func (r *AwsMSKDemoKafkaTopicReconciler) createSaramaConfig(ctx context.Context) (*sarama.Config, error) {
+	log := log.FromContext(ctx)
+
+	saramaCfg := sarama.NewConfig()
+	saramaCfg.Version = sarama.V3_6_0_0 // for PoC purposes only
+
+	tslCfg, err := r.createTlsConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tslCfg.InsecureSkipVerify = true
+	tslCfg.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		cert, _ := x509.ParseCertificate(rawCerts[0])
+		log.Info("using client cert with CN: " + cert.Subject.CommonName)
+		return nil
+	}
+	saramaCfg.Net.TLS.Enable = true
+	saramaCfg.Net.TLS.Config = tslCfg
+
+	return saramaCfg, nil
+}
+
 func (r *AwsMSKDemoKafkaTopicReconciler) createTlsConfig(ctx context.Context) (*tls.Config, error) {
 	// Load TLS certificates
 	cert, err := r.loadCertificate(ctx)
@@ -409,5 +452,6 @@ func (r *AwsMSKDemoKafkaTopicReconciler) loadRootCA(ctx context.Context) (*x509.
 func (r *AwsMSKDemoKafkaTopicReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&awsv1alpha1.AwsMSKDemoKafkaTopic{}).
+		WithEventFilter(predicate.Or(predicate.GenerationChangedPredicate{}, predicate.LabelChangedPredicate{})).
 		Complete(r)
 }

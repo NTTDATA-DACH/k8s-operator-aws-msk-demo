@@ -49,13 +49,10 @@ spec:
                       type: string
                     principal:
                       type: string
-                    topicName:
-                      type: string
                   required:
                   - operation
                   - permissionType
                   - principal
-                  - topicName
                   type: object
                 type: array
               clusterArn:

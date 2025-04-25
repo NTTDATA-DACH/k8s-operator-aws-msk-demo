@@ -41,7 +41,6 @@ type AwsMSKDemoKafkaTopicSpec struct {
 
 type AwsMSKDemoKafkaACL struct {
 	Principal      string `json:"principal"`
-	TopicName      string `json:"topicName"`
 	PermissionType string `json:"permissionType"`
 	Operation      string `json:"operation"`
 }
