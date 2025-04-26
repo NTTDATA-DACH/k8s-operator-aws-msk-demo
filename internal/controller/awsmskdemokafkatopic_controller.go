@@ -111,10 +111,12 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		topic.Status.Status = awsv1alpha1.StateDeleting
 
 		// Remove ACLs
-		if err = r.removeKafkaACLs(ctx, topic); err != nil {
-			log.Error(err, "failed to remove ACLs: "+err.Error())
-			return ctrl.Result{}, err
-		}
+		/*
+			if err = r.removeKafkaACLs(ctx, topic); err != nil {
+				log.Error(err, "failed to remove ACLs: "+err.Error())
+				return ctrl.Result{}, err
+			}
+		*/
 
 		// Remove topic
 		if err = r.deleteMSKKafkaTopic(ctx, topic); err != nil {
@@ -156,10 +158,12 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		err = r.applyKafkaACLs(ctx, topic)
-		if err != nil {
-			log.Error(err, "failed to apply ACLs: "+err.Error())
-		}
+		/*
+			err = r.applyKafkaACLs(ctx, topic)
+			if err != nil {
+				log.Error(err, "failed to apply ACLs: "+err.Error())
+			}
+		*/
 		topic.Status.Status = awsv1alpha1.StateCreated
 	}
 
