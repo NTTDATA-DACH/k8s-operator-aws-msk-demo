@@ -69,7 +69,7 @@ type AwsMSKDemoKafkaTopicSpec struct {
 	Name              string               `json:"name"`
 	Partitions        int32                `json:"partitions"`
 	ReplicationFactor int16                `json:"replicationFactor"`
-	ACLs              []AwsMSKDemoKafkaACL `json:"acls"`
+	ACLs              []AwsMSKDemoKafkaACL `json:"acls,omitempty"`
 }
 
 type AwsMSKDemoKafkaACL struct {
@@ -128,10 +128,66 @@ To allow communication between the Operator code and MSK we must define a specia
 The Trust relationships of the Role must be defined as follows:
 
 ```
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "arn:aws:iam::<Account ID>:oidc-provider/oidc.eks.eu-central-1.amazonaws.com/id/<OpenID Connect provider>"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringEquals": {
+                    "oidc.eks.eu-central-1.amazonaws.com/id/<OpenID Connect provider>:aud": "sts.amazonaws.com",
+                    "oidc.eks.eu-central-1.amazonaws.com/id/<OpenID Connect provider>:sub": "system:serviceaccount:k8s-operator-aws-msk-demo-system:k8s-operator-aws-msk-demo-controller-manager"
+                }
+            }
+        }
+    ]
+}
 ```
 
 And the Role needs following MSK permissions defined in the attached policy:
 ```
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "kafka:DescribeClusterV2",
+                "kafka:ListClustersV2",
+                "kafka:ListClusters",
+                "kafka:ListKafkaVersions",
+                "kafka:GetBootstrapBrokers",
+                "kafka:DescribeConfiguration"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "ClusterConnectAndDescribe",
+            "Effect": "Allow",
+            "Action": [
+                "kafka-cluster:Connect",
+                "kafka-cluster:DescribeCluster"
+            ],
+            "Resource": "<MSK Cluster Arn>"
+        },
+        {
+            "Sid": "TopicCrud",
+            "Effect": "Allow",
+            "Action": [
+                "kafka-cluster:CreateTopic",
+                "kafka-cluster:DescribeTopic",
+                "kafka-cluster:AlterTopic",
+                "kafka-cluster:DeleteTopic"
+            ],
+            "Resource": "<MSK Cluster Arn>/*"
+        }
+    ]
+}
 ```
 
 ### Annotating Operator Pod's Service Account
