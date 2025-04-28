@@ -5,13 +5,16 @@ kind: Kustomization
 images:
 - name: controller
   newName: 063010046250.dkr.ecr.eu-central-1.amazonaws.com/k8s-operator-aws-msk-demo
-  newTag: v0.0.61
+  newTag: v0.0.71
 secretGenerator:
 - files:
-  - client.crt=client.crt
-  - client.key=client.key
-  - ca.crt=ca.crt
+  - tls.crt=client-only.crt     # client certificate (without root CA)
+  - tls.key=keystore.pem        # combined private key (client.key) with client certificate (client-only.crt)
   name: kafka-client-cert
+  type: kubernetes.io/tls
+- files:
+  - ca.crt=ca.crt               # CA certificate
+  name: kafka-ca-bundle
   type: Opaque
 generatorOptions:
   disableNameSuffixHash: true

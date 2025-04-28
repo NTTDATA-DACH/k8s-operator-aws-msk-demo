@@ -7,10 +7,11 @@
 bin/*
 Dockerfile.cross
 
-# Certs
+# Keys & Certs
 cert
 *.crt
 *.key
+*.pem
 
 # Test binary, built with `go test -c`
 *.test

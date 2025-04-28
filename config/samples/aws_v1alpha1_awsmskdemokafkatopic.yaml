@@ -4,19 +4,9 @@ metadata:
   labels:
     app.kubernetes.io/name: k8s-operator-aws-msk-demo
     app.kubernetes.io/managed-by: kustomize
-  name: awsmskdemokafkatopic23-demo
+  name: awsmskdemokafkatopic37-demo
 spec:
   clusterArn: arn:aws:kafka:eu-central-1:063010046250:cluster/aboczek-msk-cluster-manu1/8b0b2493-fc95-4660-a91d-d4cc12eb162e-8
-  name: "demo-topic23"
-  partitions: 3
+  name: "awsmskdemooperator-topic37"
+  partitions: 1
   replicationFactor: 3
-  acls:
-    - principal: "User:aboczek CA 1"
-      permissionType: "Allow"
-      operation: "Describe"
-    - principal: "User:aboczek CA 1"
-      permissionType: "Allow"
-      operation: "Read"
-    - principal: "User:aboczek CA 1"
-      permissionType: "Allow"
-      operation: "Write"

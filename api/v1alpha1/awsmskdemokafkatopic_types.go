@@ -36,7 +36,7 @@ type AwsMSKDemoKafkaTopicSpec struct {
 	Name              string               `json:"name"`
 	Partitions        int32                `json:"partitions"`
 	ReplicationFactor int16                `json:"replicationFactor"`
-	ACLs              []AwsMSKDemoKafkaACL `json:"acls"`
+	ACLs              []AwsMSKDemoKafkaACL `json:"acls,omitempty"`
 }
 
 type AwsMSKDemoKafkaACL struct {

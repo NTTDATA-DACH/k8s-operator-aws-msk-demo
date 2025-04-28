@@ -65,7 +65,6 @@ spec:
               replicationFactor:
                 type: integer
             required:
-            - acls
             - clusterArn
             - name
             - partitions

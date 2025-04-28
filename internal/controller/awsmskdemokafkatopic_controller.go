@@ -43,9 +43,9 @@ import (
 
 const (
 	awsmskdemoinstanceFinalizer = "aws.nttdata.com/finalizer"
-	sslKeyLocation              = "/certs/client.key"
-	sslCertLocation             = "/certs/client.crt"
-	sslCALocation               = "/certs/ca.crt"
+	sslKeyLocation              = "/certs/tls.key"
+	sslCertLocation             = "/certs/tls.crt"
+	sslCALocation               = "/ca/ca.crt"
 )
 
 // AwsMSKDemoKafkaTopicReconciler reconciles a AwsMSKDemoKafkaTopic object
@@ -111,12 +111,10 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		topic.Status.Status = awsv1alpha1.StateDeleting
 
 		// Remove ACLs
-		/*
-			if err = r.removeKafkaACLs(ctx, topic); err != nil {
-				log.Error(err, "failed to remove ACLs: "+err.Error())
-				return ctrl.Result{}, err
-			}
-		*/
+		if err = r.removeKafkaACLs(ctx, topic); err != nil {
+			log.Error(err, "failed to remove ACLs: "+err.Error())
+			return ctrl.Result{}, err
+		}
 
 		// Remove topic
 		if err = r.deleteMSKKafkaTopic(ctx, topic); err != nil {
@@ -158,12 +156,11 @@ func (r *AwsMSKDemoKafkaTopicReconciler) Reconcile(ctx context.Context, req ctrl
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		/*
-			err = r.applyKafkaACLs(ctx, topic)
-			if err != nil {
-				log.Error(err, "failed to apply ACLs: "+err.Error())
-			}
-		*/
+		err = r.applyKafkaACLs(ctx, topic)
+		if err != nil {
+			log.Error(err, "failed to apply ACLs: "+err.Error())
+		}
+
 		topic.Status.Status = awsv1alpha1.StateCreated
 	}
 
@@ -242,6 +239,7 @@ func (r *AwsMSKDemoKafkaTopicReconciler) applyKafkaACLs(ctx context.Context, top
 			PermissionType: pt,
 			Operation:      op,
 			Principal:      sacl.Principal,
+			Host:           "*",
 		}
 		acls = append(acls, &acl)
 	}
@@ -394,7 +392,7 @@ func (r *AwsMSKDemoKafkaTopicReconciler) createSaramaConfig(ctx context.Context)
 	tslCfg.InsecureSkipVerify = true
 	tslCfg.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 		cert, _ := x509.ParseCertificate(rawCerts[0])
-		log.Info("using client cert with CN: " + cert.Subject.CommonName)
+		log.Info("using client cert with CN: " + cert.Subject.String())
 		return nil
 	}
 	saramaCfg.Net.TLS.Enable = true

@@ -6,13 +6,19 @@ metadata:
 spec:
   template:
     spec:
-      volumes:
-        - name: kafka-client-cert
-          secret:
-            secretName: kafka-client-cert
       containers:
         - name: manager
           volumeMounts:
-            - mountPath: /certs
-              name: kafka-client-cert
+            - name: client-cert
+              mountPath: /certs
               readOnly: true
+            - name: ca-bundle
+              mountPath: /ca
+              readOnly: true
+      volumes:
+        - name: client-cert
+          secret:
+            secretName: kafka-client-cert
+        - name: ca-bundle
+          secret:
+            secretName: kafka-ca-bundle
