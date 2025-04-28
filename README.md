@@ -18,10 +18,32 @@ The implementation fulfills the customer's defined requirements for a PoC, which
 
 ## Assumptions
 
+### Installed and Configured AWS Managed Services 
+
 The operator assumes that the following services and resources are properly configured before its deployment and operation:
 * EKS Kubernetes Cluster
-* MSK Cluster
+* MSK Cluster with TLS Brokers 
 * IAM Policy and Role (look below for details)
+
+### Security 
+
+The operator expects during the deployment private key and certificates files, that have to be generated and provided by the user. 
+These files are used by Kustomize to create Secrets that are used for communication between this Operator and MSK Cluster Brokers.
+
+The [kustomization.yaml](config/manager/kustomization.yaml) file contains following configuration for the secret generator:
+
+```
+secretGenerator:
+- files:
+  - tls.crt=client-only.crt     # client certificate (without root CA)
+  - tls.key=keystore.pem        # combined private key (client.key) with client certificate (client-only.crt)
+  name: kafka-client-cert
+  type: kubernetes.io/tls
+- files:
+  - ca.crt=ca.crt               # CA certificate
+  name: kafka-ca-bundle
+  type: Opaque
+```
 
 ## Operator's CRD
 
